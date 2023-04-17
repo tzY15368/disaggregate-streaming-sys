@@ -19,10 +19,7 @@ import stateapis.*;
 import utils.BytesUtil;
 
 import java.io.*;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.LinkedBlockingQueue;
 
 class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDescriptorProvider {
@@ -42,9 +39,13 @@ class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDesc
 
     private final HashMap<BaseOperator, Integer> roundRobinCounter = new HashMap<>();
 
+    private final Queue<Tm.ReconfigMsg> pendingReconfigMsgs = new LinkedList<>();
+
     private TMConfig tmConfig;
 
-    public void setLocalAddr(String addr){
+    public static final long WATERMARK_NOW = -1;
+
+    public void setLocalAddr(String addr) {
         this.kvProvider.setLocalAddr(addr);
     }
 
@@ -103,7 +104,7 @@ class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDesc
         // TODO: BEFORE OPERATOR BOOTS, TM SHOULD UPDATE ROUTING-TABLE IF NEEDED
 
         // FIXME: IMPLEMENT THIS
-        if(this.tmConfig.useHybrid){
+        if (this.tmConfig.useHybrid) {
             // TODO: WRITE THINGS TO ROUTING TABLE
         }
 
@@ -111,7 +112,7 @@ class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDesc
         op.init(request.getConfig(), inputQueue, msgQueue, this);
         op.postInit();
         op.start();
-        if(request.getConfig().getPartitionStrategy() == Tm.PartitionStrategy.ROUND_ROBIN){
+        if (request.getConfig().getPartitionStrategy() == Tm.PartitionStrategy.ROUND_ROBIN) {
             roundRobinCounter.put(op, 0);
         }
         this.opInputQueues.put(op.getOpName(), inputQueue);
@@ -119,8 +120,8 @@ class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDesc
         logger.info(String.format("Started operator %s --all: %s", op.getOpName(), operators.keySet()));
 
         // initialize the operator's pushmsg client if needed
-        for(Tm.OutputMetadata meta: request.getConfig().getOutputMetadataList()){
-            if(!pushMsgClients.containsKey(meta.getAddress())){
+        for (Tm.OutputMetadata meta : request.getConfig().getOutputMetadataList()) {
+            if (!pushMsgClients.containsKey(meta.getAddress())) {
                 pushMsgClients.put(meta.getAddress(), new PushMsgClient(logger, meta.getAddress()));
             }
         }
@@ -128,13 +129,13 @@ class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDesc
 
     @Override
     public synchronized void addOperator(Tm.AddOperatorRequest request,
-                            StreamObserver<Empty> responseObserver) {
+                                         StreamObserver<Empty> responseObserver) {
         if (operators.size() >= operatorQuota) {
             responseObserver.onError(new StatusRuntimeException(Status.ABORTED.withDescription("operator quota exceeded")));
             return;
         }
         logger.info("Display operators why key exists");
-        for (String key : operators.keySet())  {
+        for (String key : operators.keySet()) {
             logger.info(key);
         }
         logger.info("Finish");
@@ -143,8 +144,8 @@ class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDesc
             responseObserver.onError(new StatusRuntimeException(Status.ABORTED.withDescription("operator already exists")));
             return;
         }
-        logger.info(String.format("adding operator %d/%d",this.operators.size()+1,this.operatorQuota));
-        try{
+        logger.info(String.format("adding operator %d/%d", this.operators.size() + 1, this.operatorQuota));
+        try {
             initOperator(request);
         } catch (IOException | ClassNotFoundException e) {
             responseObserver.onError(new StatusRuntimeException(Status.ABORTED.withDescription("failed to initialize operator")));
@@ -170,8 +171,37 @@ class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDesc
             responseObserver.onError(new StatusRuntimeException(Status.ABORTED.withDescription(msg)));
             return;
         }
+
         responseObserver.onNext(Empty.getDefaultInstance());
         responseObserver.onCompleted();
+    }
+
+    private synchronized void handleReconfigMsg(Tm.ReconfigMsg msg) {
+        logger.info("got reconfig message: " + msg);
+        for (Tm.OperatorConfig config : msg.getConfigMap().values()) {
+            if (!operators.containsKey(config.getName())) {
+                logger.error("applyReconfig: operator " + config.getName() + " not found");
+                continue;
+            }
+            BaseOperator op = operators.get(config.getName());
+                /*
+                we just have to update the operator's config and ask kvprovider to handle the new config
+                 */
+            op.setConfig(config);
+            this.kvProvider.handleReconfig(msg);
+        }
+    }
+
+    private synchronized void applyReconfigs(long watermark) {
+        logger.info("applying reconfig");
+        while (!pendingReconfigMsgs.isEmpty()) {
+            Tm.ReconfigMsg msg = pendingReconfigMsgs.peek();
+            if (msg == null || msg.getEffectiveWaterMark() > watermark) {
+                break;
+            }
+            pendingReconfigMsgs.poll();
+            this.handleReconfigMsg(msg);
+        }
     }
 
     /**
@@ -180,28 +210,24 @@ class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDesc
     @Override
     public void removeOperator(Tm.RemoveOperatorRequest request,
                                StreamObserver<Empty> responseObserver) {
-
-    }
-
-    @Override
-    public void reConfigOperator(Tm.ReConfigOperatorRequest request,
-                                 StreamObserver<Empty> responseObserver) {
-        Tm.OperatorConfig config = request.getConfig();
-        try {
-            operators.get(config.getName()).setConfig(config);
-
-        } catch (Exception e) {
-            String msg = "invalid op name.";
-            logger.error(msg);
-            responseObserver.onError(new StatusRuntimeException(Status.ABORTED.withDescription(msg)));
+        // the operator's load should have been redirected by this point,
+        // so we can just remove it from the operators map
+        String opName = request.getOperatorName();
+        BaseOperator op = operators.get(opName);
+        if (op == null) {
+            responseObserver.onError(new StatusRuntimeException(Status.ABORTED.withDescription("operator " + opName + " not found")));
+            return;
         }
+        this.roundRobinCounter.remove(op);
+        this.operators.remove(opName);
+        logger.info(String.format("removed operator %s --all: %s", opName, operators.keySet()));
         responseObserver.onNext(Empty.getDefaultInstance());
         responseObserver.onCompleted();
     }
 
 
     @Override
-    public void getState(Tm.GetStateRequest request, StreamObserver<Tm.GetStateResponse> responseObserver){
+    public void getState(Tm.GetStateRequest request, StreamObserver<Tm.GetStateResponse> responseObserver) {
         String stateKey = request.getStateKey();
         // note that we're assuming that if a state is remote, then it must exist, thus could not be null anyways
         Object state = this.kvProvider.get(stateKey, null);
@@ -219,7 +245,7 @@ class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDesc
     }
 
     @Override
-    public void removeState(Tm.RemoveStateRequest request, StreamObserver <Empty> responseObserver){
+    public void removeState(Tm.RemoveStateRequest request, StreamObserver<Empty> responseObserver) {
         try {
             String stateKey = request.getStateKey();
             kvProvider.delete(stateKey);
@@ -235,7 +261,7 @@ class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDesc
 
     @Override
     // EQUIVALENT TO "PUT"
-    public void updateState(Tm.UpdateStateRequest request, StreamObserver <Empty> responseObserver){
+    public void updateState(Tm.UpdateStateRequest request, StreamObserver<Empty> responseObserver) {
         String stateKey = request.getStateKey();
         byte[] stateBytes = request.getObj().toByteArray();
         kvProvider.put(stateKey, stateBytes);
@@ -291,7 +317,7 @@ class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDesc
                 Tm.Msg msg = msgBuilder.setReceiverOperatorName(target.getName()).build();
                 pushMsgClients.get(target.getAddress()).pushMsg(msg);
             }
-            logger.debug("sendloop: sending msg to"+targetOutput);
+            logger.debug("sendloop: sending msg to" + targetOutput);
         }
     }
 
@@ -314,8 +340,8 @@ class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDesc
         return new ListStateAccessor(op.getOpName() + "." + stateName, this.kvProvider);
     }
 
-    private void checkStateName(String name){
-        if(name.contains(".")){
+    private void checkStateName(String name) {
+        if (name.contains(".")) {
             throw new IllegalArgumentException("state name can not contain '.'");
         }
     }
