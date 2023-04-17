@@ -13,11 +13,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 
 import pb.Tm;
-import utils.DefaultKeySelector;
+import stateapis.IKeyGetter;
 import utils.FatalUtil;
 import utils.SerDe;
 
-public abstract class BaseOperator extends Thread implements Serializable {
+public abstract class BaseOperator extends Thread implements Serializable, IKeyGetter {
     protected transient LinkedBlockingQueue<Tm.Msg> inputQueue;
     private transient LinkedBlockingQueue<OutputMessage> outputQueue;
     protected transient Logger logger = LogManager.getLogger();
@@ -74,20 +74,25 @@ public abstract class BaseOperator extends Thread implements Serializable {
         this.config = config;
     }
 
-    // !! No control message reaches the operator, only data messages
-//    private void handleMsg(Tm.Msg input) {
-//        switch (input.getType()) {
-//            case DATA:
-//                processElement(input.getData());
-//                break;
-//            case CONTROL:
-//                // do something about the control msg
-//                logger.info("got control msg: " + input);
-//                // send it downstream
-//                sendOutput(input);
-//                break;
-//        }
-//    }
+    public void setKeySelector(IKeySelector keySelector) {
+    	this.keySelector = keySelector;
+    }
+
+    public boolean hasKeySelector() {
+    	return keySelector != null;
+    }
+
+    public String getCurrentKey(){
+        if(!this.hasKeySelector()){
+            return null;
+        }
+        int keyInt = keySelector.getKey(currentObj);
+        int desiredLength = 8;
+        String hexString = Integer.toHexString(keyInt);
+        hexString = String.format("%1$" + (desiredLength - 2) + "s", hexString).replace(' ', '0');
+        hexString = "0x" + hexString;
+        return hexString;
+    }
 
     class BaseOutputSender implements OutputSender{
         private long ingestTime;
