@@ -117,12 +117,13 @@ class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDesc
         }
         this.opInputQueues.put(op.getOpName(), inputQueue);
         operators.put(op.getOpName(), op);
-        logger.info(String.format("Started operator %s --all: %s", op.getOpName(), operators.keySet()));
+        logger.info(String.format("Started operator [%d] %s --all: %s", op.getConfig().getLogicalStage(),
+                op.getOpName(), operators.keySet()));
 
         // initialize the operator's pushmsg client if needed
         for (Tm.OutputMetadata meta : request.getConfig().getOutputMetadataList()) {
             if (!pushMsgClients.containsKey(meta.getAddress())) {
-                pushMsgClients.put(meta.getAddress(), new PushMsgClient(logger, meta.getAddress()));
+                pushMsgClients.put(meta.getAddress(), new PushMsgClient(logger, meta.getAddress(), false));
             }
         }
     }
@@ -147,6 +148,7 @@ class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDesc
         logger.info(String.format("adding operator %d/%d", this.operators.size() + 1, this.operatorQuota));
         try {
             initOperator(request);
+            kvProvider.addInvolvedOp(request.getConfig().getName());
         } catch (IOException | ClassNotFoundException e) {
             responseObserver.onError(new StatusRuntimeException(Status.ABORTED.withDescription("failed to initialize operator")));
             return;
@@ -183,12 +185,12 @@ class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDesc
                 logger.error("applyReconfig: operator " + config.getName() + " not found");
                 continue;
             }
-            BaseOperator op = operators.get(config.getName());
-                /*
+            /*
                 we just have to update the operator's config and ask kvprovider to handle the new config
-                 */
-            op.setConfig(config);
+             */
             this.kvProvider.handleReconfig(msg);
+            BaseOperator op = operators.get(config.getName());
+            op.setConfig(config);
         }
     }
 
@@ -220,6 +222,8 @@ class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDesc
         }
         this.roundRobinCounter.remove(op);
         this.operators.remove(opName);
+        this.opInputQueues.remove(opName);
+        this.kvProvider.removeInvolvedOp(opName);
         logger.info(String.format("removed operator %s --all: %s", opName, operators.keySet()));
         responseObserver.onNext(Empty.getDefaultInstance());
         responseObserver.onCompleted();
