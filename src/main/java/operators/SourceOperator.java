@@ -51,11 +51,12 @@ public class SourceOperator<T> extends BaseOperator implements Serializable {
 //                } catch (InterruptedException e) {
 //                    throw new RuntimeException(e);
 //                }
-                System.out.println("SOURCE OPERATOR setIngestTime:"+(System.currentTimeMillis() - startTimeStamp));
+//                System.out.println("SOURCE OPERATOR setIngestTime:"+(System.currentTimeMillis() - startTimeStamp));
                 Tm.Msg msg = Tm.Msg.newBuilder()
                         .setType(Tm.Msg.MsgType.DATA)
                         .setData(bs)
                         .setSenderOperatorName("DATA SOURCE")
+//                        .setIngestTime(System.currentTimeMillis() - startTimeStamp)
                         .build();
                 inputQueue.add(msg);
             }
@@ -95,9 +96,17 @@ public class SourceOperator<T> extends BaseOperator implements Serializable {
     @Override
     // simply move whatever we have in the input queue to the output queue
     protected void processElement(Tm.Msg msg, OutputSender outputSender) {
+        //TODO: need to be removed , just used for testing prometheus
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
 //        T obj = (T) serdeIn.deserializeIn(msg.getData());
         Tm.Msg newMsg=msg.toBuilder().setIngestTime((System.currentTimeMillis() - startTimeStamp)).build();
-        outputSender.sendOutput(newMsg);
+//        System.out.println(newMsg.getIngestTime());
+        outputSender.setIngestTime(newMsg.getIngestTime());
+        outputSender.sendOutput(msg);
     }
 
 //    @Override
