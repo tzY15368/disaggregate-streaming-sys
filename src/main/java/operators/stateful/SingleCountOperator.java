@@ -33,7 +33,6 @@ public class SingleCountOperator extends BaseOperator implements Serializable {
         Tm.Msg.Builder builder = Tm.Msg.newBuilder();
         builder.mergeFrom(msg);
         builder.setData(bs);
-        System.out.println("SingleCountOperator: " + builder.build().getIngestTime());
         outputSender.sendOutput(builder.build());
     }
 }

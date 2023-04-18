@@ -22,7 +22,6 @@ public class Filter<T> extends BaseOperator implements Serializable {
     }
     @Override
     protected void processElement(Tm.Msg msg, OutputSender outputSender) {
-//        System.out.println("FilterOperator: " + msg.getIngestTime());
         ByteString in = msg.getData();
         T data = (T) serdeIn.deserializeIn(in);
         if (predicate.test(data)) {

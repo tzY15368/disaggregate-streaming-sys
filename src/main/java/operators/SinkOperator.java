@@ -24,7 +24,7 @@ public class SinkOperator extends BaseOperator implements Serializable {
     @Override
     public void postInit() {
         super.postInit();
-        prometheus = new Prometheus(9091);
+        prometheus = new Prometheus();
     }
     @Override
     protected void processWatermark(Tm.Msg msg, OutputSender outputSender) {
