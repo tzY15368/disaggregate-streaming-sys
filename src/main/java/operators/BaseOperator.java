@@ -31,7 +31,7 @@ public abstract class BaseOperator extends Thread implements Serializable, IKeyG
 
     private IKeySelector keySelector = new DefaultKeySelector();
     protected Tm.Msg currentInputMsg;
-    protected long startTimeStamp = (long) (System.currentTimeMillis() / 1000.0);
+    protected  static long  startTimeStamp;
     protected boolean firstElementFlag = true;
     protected boolean sendWatermarkOrNot = true;
     //key: OperatorName, value: MaxWatermark. Use this to calculate min of the max watermark
