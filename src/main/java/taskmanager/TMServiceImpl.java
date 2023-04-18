@@ -211,13 +211,53 @@ class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDesc
     @Override
     public void removeOperator(Tm.RemoveOperatorRequest request,
                                StreamObserver<Empty> responseObserver) {
-        // the operator's load should have been redirected by this point,
-        // so we can just remove it from the operators map
-        String opName = request.getOperatorName();
-        BaseOperator op = operators.get(opName);
-        if (op == null) {
+
+    }
+
+    @Override
+    public void getOperatorLowWatermark(Tm.OperatorLowWatermarkRequest request,
+                                                            StreamObserver<Tm.OperatorLowWatermarkResponse> responseObserver) {
+        String opName = request.getName();
+        String content = request.getContent();
+        if(!operators.containsKey(opName)){
             responseObserver.onError(new StatusRuntimeException(Status.ABORTED.withDescription("operator " + opName + " not found")));
             return;
+        }
+        BaseOperator op = operators.get(opName);
+        Tm.OperatorLowWatermarkResponse.Builder b = Tm.OperatorLowWatermarkResponse.newBuilder();
+        logger.info("GET LOW WATERMARK: " + op.getMinOfMaxWatermark() + " for " + opName);
+        b.setLowWatermark(op.getMinOfMaxWatermark());
+        responseObserver.onNext(b.build());
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void setOperatorExternalTimestamp(Tm.OperatorExternalTimestampRequest request,
+                                             StreamObserver<Empty> responseObserver) {
+        String opName = request.getName();
+        long reconfigTimestamp = request.getReconfigTimestamp();
+        if(!operators.containsKey(opName)){
+            responseObserver.onError(new StatusRuntimeException(Status.ABORTED.withDescription("operator " + opName + " not found")));
+            return;
+        }
+        BaseOperator op = operators.get(opName);
+        logger.info("RECONFIG TIMESTAMP: " + reconfigTimestamp + " for "+ opName);
+        op.setReconfigTimestamp(reconfigTimestamp);
+        responseObserver.onNext(Empty.getDefaultInstance());
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void reConfigOperator(Tm.ReConfigOperatorRequest request,
+                                 StreamObserver<Empty> responseObserver) {
+        Tm.OperatorConfig config = request.getConfig();
+        try {
+            operators.get(config.getName()).setConfig(config);
+
+        } catch (Exception e) {
+            String msg = "invalid op name.";
+            logger.error(msg);
+            responseObserver.onError(new StatusRuntimeException(Status.ABORTED.withDescription(msg)));
         }
         this.roundRobinCounter.remove(op);
         this.operators.remove(opName);
