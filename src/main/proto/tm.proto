@@ -112,7 +112,6 @@ service TMService{
 
 message PullStatesRequest{
   int32 logicalStage = 1;
-  string operatorName = 2;
   PartitionPlan partitionPlan = 3;
 }
 

@@ -91,6 +91,7 @@ public abstract class BaseOperator extends Thread implements Serializable, IKeyG
         String hexString = Integer.toHexString(keyInt);
         hexString = String.format("%1$" + (desiredLength - 2) + "s", hexString).replace(' ', '0');
         hexString = "0x" + hexString;
+        assert hexString.length() == 10;
         return hexString;
     }
 
