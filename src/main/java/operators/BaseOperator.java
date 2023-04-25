@@ -171,7 +171,7 @@ public abstract class BaseOperator extends Thread implements Serializable, IKeyG
 
     protected void processDataFlow(Tm.Msg msg, OutputSender outputSender) {
         switch (msg.getType()) {
-            case DATA: 
+            case DATA:
                 currentObj = serdeIn.deserializeIn(msg.getData());
                 processElement(msg, outputSender);
                 break;
