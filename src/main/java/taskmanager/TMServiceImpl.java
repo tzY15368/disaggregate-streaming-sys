@@ -401,8 +401,9 @@ class TMServiceImpl extends TMServiceGrpc.TMServiceImplBase implements StateDesc
 
 
     private void sendLoop() throws InterruptedException {
-        long current_startTime = System.currentTimeMillis();
         while (true) {
+            this.pendingOutputMsgs.clear();
+            long current_startTime = System.currentTimeMillis();
             // operator-name, serialized msg, <partition key, msg type>
             if (msgQueue.size() < tmConfig.batch_size && System.currentTimeMillis() - current_startTime < tmConfig.batch_timeout_ms) {
                 logger.info("sendloop: msg queue size is " + msgQueue.size() + ", waiting for more messages, batch size is " + tmConfig.batch_size + " ...");
